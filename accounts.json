@@ -1,0 +1,18 @@
+[
+  {
+    "name": "account 1",
+    "account_key": "Bd8l23G08828",
+    "fromAddress": "carli@petsforlovers.com",
+    "client_id": "895537963.V6KY3QMZ3MDKSMD2FIXVGVVZXSBFOG",
+    "client_secret": "27d703da2066088f5fd91e21fb16db4dc453d7e399",
+    "refresh_token": "895537963.ba88e101cf410385dc9c43d892b0c389.ebf6ad58bd26d7a2946b92df1695fa3c"
+  },
+  {
+    "name": "Another Account",
+    "account_key": "another_account_key",
+    "fromAddress": "another_email@another_domain.com",
+    "client_id": "another_client_id",
+    "client_secret": "another_client_secret",
+    "refresh_token": "another_refresh_token_for_the_other_account"
+  }
+]
