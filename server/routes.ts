@@ -3,6 +3,11 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { singleEmailSchema, bulkEmailSchema, type EmailAccount, type EmailResult } from "@shared/schema";
 import axios from "axios";
+import fs from "fs";
+import path from "path";
+import { nanoid } from "nanoid";
+import { URLSearchParams } from "url";
+import { fileURLToPath } from "url";
 
 // Global cache for access tokens
 const tokenCache: Record<string, { access_token: string; expires_at: number }> = {};
@@ -53,13 +58,52 @@ const getZohoAccessToken = async (account: EmailAccount) => {
   }
 };
 
+// Helper function to get all sub-accounts from the Zoho API
+const getZohoSubAccounts = async (account: EmailAccount) => {
+  await getZohoAccessToken(account);
+  const accessToken = tokenCache[account.name].access_token;
+  
+  const zohoResponse = await axios.get(
+    `https://mail360.zoho.com/api/accounts`,
+    {
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Zoho-oauthtoken ${accessToken}`
+      }
+    }
+  );
+  return zohoResponse.data;
+};
+
 // Helper function to send email via Zoho Mail360 API
-const sendEmail = async (account: EmailAccount, mailOptions: any) => {
+const sendEmail = async (primaryAccountKey: string, fromAddress: string, mailOptions: any) => {
   try {
-    const accessToken = tokenCache[account.name].access_token;
+    const primaryAccounts = await storage.getEmailAccounts();
+    const selectedPrimaryAccount = primaryAccounts.find(acc => acc.account_key === primaryAccountKey);
+
+    if (!selectedPrimaryAccount) {
+        throw new Error('Invalid primary account selected.');
+    }
+
+    // Get the correct sub-account key from Zoho API
+    const subAccountsResponse = await getZohoSubAccounts(selectedPrimaryAccount);
+    const subAccount = subAccountsResponse.data.find((acc: any) => acc.emailAddress === fromAddress);
+
+    if (!subAccount) {
+        throw new Error('From address not found in Zoho sub-accounts.');
+    }
+
+    await getZohoAccessToken(selectedPrimaryAccount);
+    const accessToken = tokenCache[selectedPrimaryAccount.name].access_token;
+    
+    // Check if fromAddress is a valid email pattern before sending
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fromAddress)) {
+      throw new Error("Invalid fromAddress format.");
+    }
+    
     const response = await axios.post(
-      `https://mail360.zoho.com/api/accounts/${account.account_key}/messages`,
-      mailOptions,
+      `https://mail360.zoho.com/api/accounts/${subAccount.account_key}/messages`,
+      { ...mailOptions, fromAddress },
       {
         headers: {
           'Content-Type': 'application/json',
@@ -73,6 +117,7 @@ const sendEmail = async (account: EmailAccount, mailOptions: any) => {
     return { success: false, error: error.response ? error.response.data : error.message };
   }
 };
+
 
 export async function registerRoutes(app: Express): Promise<Server> {
   
@@ -91,7 +136,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const validatedData = singleEmailSchema.parse(req.body);
       const accounts = await storage.getEmailAccounts();
-      const selectedAccount = accounts.find(acc => acc.account_key === validatedData.accountSelect);
+      const selectedAccount = accounts.find(acc => acc.account_key === validatedData.primaryAccountKey);
 
       if (!selectedAccount) {
         return res.status(400).json({ message: "Invalid account selected." });
@@ -100,14 +145,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await getZohoAccessToken(selectedAccount);
 
       const mailOptions = {
-        fromAddress: selectedAccount.fromAddress,
         toAddress: validatedData.toAddress,
         subject: validatedData.subject,
         content: validatedData.content,
         mailFormat: 'html'
       };
 
-      const result = await sendEmail(selectedAccount, mailOptions);
+      const result = await sendEmail(validatedData.primaryAccountKey, validatedData.accountSelect, mailOptions);
 
       if (result.success) {
         res.json({ 
@@ -137,7 +181,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const validatedData = bulkEmailSchema.parse(req.body);
       const accounts = await storage.getEmailAccounts();
-      const selectedAccount = accounts.find(acc => acc.account_key === validatedData.accountSelect);
+      const selectedAccount = accounts.find(acc => acc.account_key === validatedData.primaryAccountKey);
 
       if (!selectedAccount) {
         return res.status(400).json({ message: "Invalid account selected." });
@@ -150,13 +194,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       for (const toAddress of recipientList) {
         const mailOptions = {
-          fromAddress: selectedAccount.fromAddress,
           toAddress: toAddress,
           subject: validatedData.subject,
           content: validatedData.content,
           mailFormat: 'html'
         };
-        const result = await sendEmail(selectedAccount, mailOptions);
+        const result = await sendEmail(validatedData.primaryAccountKey, validatedData.accountSelect, mailOptions);
         results.push({
           recipient: toAddress,
           status: result.success ? 'Success' : 'Failed',
@@ -174,6 +217,88 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: error.message || "Failed to send bulk email" });
     }
   });
+  
+  // Add Native Zoho Account
+  app.post("/api/add-native-account", async (req, res) => {
+    try {
+      const { name, emailid, displayName } = req.body;
+      
+      const accounts = await storage.getEmailAccounts();
+      const selectedAccount = accounts.find(acc => acc.account_key === "Bd8l23G08828");
+
+      if (!selectedAccount) {
+        return res.status(400).json({ message: "No master account configured to add sub-accounts." });
+      }
+
+      await getZohoAccessToken(selectedAccount);
+      const accessToken = tokenCache[selectedAccount.name].access_token;
+      
+      const zohoResponse = await axios.post(
+        `https://mail360.zoho.com/api/accounts`,
+        {
+          emailid,
+          displayName,
+          accountType: "1"
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Zoho-oauthtoken ${accessToken}`
+          }
+        }
+      );
+
+      res.status(200).json({ 
+        success: true, 
+        message: "Account added successfully!",
+        data: zohoResponse.data.data
+      });
+
+    } catch (error: any) {
+      console.error("Error adding account:", error.response ? error.response.data : error.message);
+      res.status(500).json({ message: error.message || "Failed to add account" });
+    }
+  });
+  
+  // Get All Zoho Sub-Accounts (from addresses) for a given primary account
+  app.get("/api/zoho-accounts", async (req, res) => {
+    try {
+      const accountKey = req.query.accountKey as string;
+      if (!accountKey) {
+        return res.status(400).json({ message: "accountKey is required." });
+      }
+
+      const accounts = await storage.getEmailAccounts();
+      const selectedAccount = accounts.find(acc => acc.account_key === accountKey);
+
+      if (!selectedAccount) {
+        return res.status(400).json({ message: "Invalid account selected." });
+      }
+      
+      await getZohoAccessToken(selectedAccount);
+      const accessToken = tokenCache[selectedAccount.name].access_token;
+      
+      const zohoResponse = await axios.get(
+        `https://mail360.zoho.com/api/accounts`,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Zoho-oauthtoken ${accessToken}`
+          }
+        }
+      );
+
+      // Log the full response from the Zoho API for debugging
+      console.log('Zoho API Response for sub-accounts:', JSON.stringify(zohoResponse.data, null, 2));
+
+      res.json(zohoResponse.data);
+
+    } catch (error: any) {
+      console.error("Error fetching Zoho sub-accounts:", error.response ? error.response.data : error.message);
+      res.status(500).json({ message: error.message || "Failed to fetch accounts from Zoho." });
+    }
+  });
+
 
   // Get bulk email results
   app.get("/api/bulk-results", async (req, res) => {

@@ -31,6 +31,7 @@ export type EmailAccount = z.infer<typeof emailAccountSchema>;
 
 // Single email schema
 export const singleEmailSchema = z.object({
+  primaryAccountKey: z.string(), // Add this new field
   accountSelect: z.string(),
   toAddress: z.string().email(),
   subject: z.string().min(1, "Subject is required"),
@@ -41,6 +42,7 @@ export type SingleEmail = z.infer<typeof singleEmailSchema>;
 
 // Bulk email schema
 export const bulkEmailSchema = z.object({
+  primaryAccountKey: z.string(), // Add this new field
   accountSelect: z.string(),
   recipients: z.string().min(1, "Recipients are required"),
   subject: z.string().min(1, "Subject is required"),

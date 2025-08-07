@@ -1,7 +1,8 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,9 +12,22 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Send, Mail, User, Users, Type, Edit3, Upload, CheckCircle, XCircle, Code, Eye, Activity, BarChart3, Filter, Download, Search, Trash2, AlertTriangle, Copy } from "lucide-react";
+import { Loader2, Send, Mail, User, Users, Type, Edit3, Upload, CheckCircle, XCircle, Code, Eye, Activity, BarChart3, Filter, Download, Search, Trash2, AlertTriangle, Copy, AtSign, Pause, Play, Square } from "lucide-react";
 import { bulkEmailSchema, type BulkEmail, type EmailAccount, type EmailResult } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
+
+const zohoSubAccountSchema = z.object({
+  account_key: z.string(),
+  emailAddress: z.string().email(),
+  displayName: z.string(),
+  type: z.string(),
+  enabled: z.boolean(),
+  isOAuthAcc: z.boolean(),
+  incomingBlocked: z.boolean(),
+  outgoingBlocked: z.boolean(),
+});
+
+type ZohoSubAccount = z.infer<typeof zohoSubAccountSchema>;
 
 function ResponseCodePopup({ result }: { result: EmailResult }) {
   return (
@@ -115,33 +129,48 @@ export default function BulkSend() {
   const [showResults, setShowResults] = useState(false);
   const [currentResults, setCurrentResults] = useState<EmailResult[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [isEnded, setIsEnded] = useState(false);
   const [currentRecipientIndex, setCurrentRecipientIndex] = useState(0);
   const [statusFilter, setStatusFilter] = useState<'all' | 'Success' | 'Failed'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [showEmailPreview, setShowEmailPreview] = useState(false);
+  const [selectedPrimaryAccountKey, setSelectedPrimaryAccountKey] = useState<string | null>(null);
 
-  const { data: accounts, isLoading: accountsLoading } = useQuery<EmailAccount[]>({
+  const { data: primaryAccounts, isLoading: primaryAccountsLoading } = useQuery<EmailAccount[]>({
     queryKey: ['/api/accounts']
   });
 
-  const { data: results, isLoading: resultsLoading } = useQuery<EmailResult[]>({
+  const { data: subAccounts, isLoading: subAccountsLoading } = useQuery<ZohoSubAccount[]>({
+    queryKey: ['/api/zoho-accounts', selectedPrimaryAccountKey],
+    queryFn: async ({ queryKey }) => {
+      const [_key, accountKey] = queryKey;
+      if (!accountKey) return [];
+      const res = await apiRequest('GET', `/api/zoho-accounts?accountKey=${accountKey}`);
+      const data = await res.json();
+      return z.object({
+        status: z.any(),
+        data: z.array(zohoSubAccountSchema),
+      }).parse(data).data;
+    },
+    enabled: !!selectedPrimaryAccountKey,
+    staleTime: Infinity,
+  });
+
+  const { data: results } = useQuery<EmailResult[]>({
     queryKey: ['/api/bulk-results'],
     enabled: showResults,
   });
 
-  // Filtered and sorted results (newest first)
   const filteredResults = useMemo(() => {
     let filtered = [...(currentResults.length > 0 ? currentResults : results || [])];
     
-    // Reverse to show newest first
     filtered = filtered.reverse();
     
-    // Apply status filter
     if (statusFilter !== 'all') {
       filtered = filtered.filter(result => result.status === statusFilter);
     }
     
-    // Apply search filter
     if (searchTerm) {
       filtered = filtered.filter(result => 
         result.recipient.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -152,7 +181,6 @@ export default function BulkSend() {
     return filtered;
   }, [currentResults, results, statusFilter, searchTerm]);
 
-  // Export to CSV function
   const exportToCSV = () => {
     const headers = ['#', 'Recipient', 'Status', 'Message ID', 'Response Code', 'Error'];
     const csvData = filteredResults.map((result, index) => [
@@ -182,6 +210,7 @@ export default function BulkSend() {
   const form = useForm<BulkEmail>({
     resolver: zodResolver(bulkEmailSchema),
     defaultValues: {
+      primaryAccountKey: "",
       accountSelect: "",
       recipients: "",
       subject: "",
@@ -189,15 +218,21 @@ export default function BulkSend() {
     },
   });
 
-  // Auto-select first account when accounts load
-  React.useEffect(() => {
-    if (accounts && accounts.length > 0 && !form.getValues("accountSelect")) {
-      form.setValue("accountSelect", accounts[0].name);
+  useEffect(() => {
+    if (primaryAccounts && primaryAccounts.length > 0 && !selectedPrimaryAccountKey) {
+      setSelectedPrimaryAccountKey(primaryAccounts[0].account_key);
     }
-  }, [accounts, form]);
+  }, [primaryAccounts, selectedPrimaryAccountKey]);
+
+  useEffect(() => {
+    if (subAccounts && subAccounts.length > 0) {
+      form.setValue("primaryAccountKey", selectedPrimaryAccountKey as string);
+      form.setValue("accountSelect", subAccounts[0].emailAddress);
+    }
+  }, [subAccounts, form, selectedPrimaryAccountKey]);
+
 
   const recipients = form.watch("recipients");
-  // Email validation and analysis
   const emailAnalysis = useMemo(() => {
     if (!recipients) return { valid: [], invalid: [], duplicates: [], total: 0 };
     
@@ -209,7 +244,6 @@ export default function BulkSend() {
     const duplicates: string[] = [];
     
     lines.forEach(email => {
-      // Count occurrences
       emailCounts[email] = (emailCounts[email] || 0) + 1;
       
       if (emailRegex.test(email)) {
@@ -219,7 +253,6 @@ export default function BulkSend() {
       }
     });
     
-    // Find duplicates
     Object.entries(emailCounts).forEach(([email, count]) => {
       if (count > 1 && !duplicates.includes(email)) {
         duplicates.push(email);
@@ -231,21 +264,29 @@ export default function BulkSend() {
 
   const recipientCount = emailAnalysis.total;
 
-  // Send emails one by one with real-time updates
   const sendEmailsProgressively = async (formData: BulkEmail) => {
     setIsProcessing(true);
     setShowResults(true);
     setCurrentResults([]);
     setCurrentRecipientIndex(0);
+    setIsPaused(false);
+    setIsEnded(false);
 
     const recipientList = formData.recipients.split('\n').map(email => email.trim()).filter(email => email);
     const tempResults: EmailResult[] = [];
 
     for (let i = 0; i < recipientList.length; i++) {
+      // Pause/End logic
+      while (isPaused && !isEnded) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      if (isEnded) break;
+
       setCurrentRecipientIndex(i + 1);
       
       try {
         const singleEmailData = {
+          primaryAccountKey: selectedPrimaryAccountKey,
           accountSelect: formData.accountSelect,
           toAddress: recipientList[i],
           subject: formData.subject,
@@ -267,7 +308,6 @@ export default function BulkSend() {
         tempResults.push(emailResult);
         setCurrentResults([...tempResults]);
 
-        // Small delay to show progression
         await new Promise(resolve => setTimeout(resolve, 500));
 
       } catch (error: any) {
@@ -286,7 +326,6 @@ export default function BulkSend() {
 
     setIsProcessing(false);
     
-    // Store results in backend for navbar stats
     try {
       await apiRequest('POST', '/api/store-bulk-results', { results: tempResults });
     } catch (error) {
@@ -314,28 +353,24 @@ export default function BulkSend() {
   });
 
   const onSubmit = (data: BulkEmail) => {
-    // Only send valid, unique emails
+    // Keep all emails, including duplicates and invalid ones, for processing
     const emailList = recipients.split('\n').map(email => email.trim()).filter(email => email.length > 0);
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    const validEmails = emailList.filter(email => emailRegex.test(email));
-    const uniqueValidEmails = Array.from(new Set(validEmails));
     
     console.log('Email processing:', {
       total: emailList.length,
-      valid: validEmails.length, 
-      uniqueValid: uniqueValidEmails.length,
-      emailList: uniqueValidEmails
+      emailList: emailList
     });
     
     const cleanedData = {
       ...data,
-      recipients: uniqueValidEmails.join('\n')
+      recipients: emailList.join('\n')
     };
     sendBulkEmailMutation.mutate(cleanedData);
   };
 
   const clearForm = () => {
     form.reset({
+      primaryAccountKey: '',
       accountSelect: '',
       recipients: '',
       subject: '',
@@ -358,7 +393,7 @@ export default function BulkSend() {
     form.setValue('recipients', uniqueEmails.join('\n'));
   };
 
-  if (accountsLoading) {
+  if (primaryAccountsLoading) {
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="flex items-center justify-center min-h-[400px]">
@@ -380,34 +415,61 @@ export default function BulkSend() {
           <p className="text-sm text-slate-600">Send bulk emails and track results in real-time</p>
         </div>
 
-        {/* Bulk Email Composer Card */}
         <Card className="bg-white rounded-lg shadow-md border border-slate-200">
           <CardContent className="p-4">
             <Form {...form}>
               <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4" data-testid="form-bulk-email">
                 
-                {/* Account Selection */}
+                {/* Primary Account Selection */}
+                <FormItem>
+                  <FormLabel className="text-xs font-medium text-slate-600 flex items-center">
+                    <User className="h-3 w-3 mr-1" />
+                    Primary Account
+                  </FormLabel>
+                  <Select onValueChange={setSelectedPrimaryAccountKey} value={selectedPrimaryAccountKey || ''} data-testid="select-primary-account">
+                    <FormControl>
+                      <SelectTrigger className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+                        <SelectValue placeholder="Choose a primary account" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {primaryAccounts?.map((account) => (
+                        <SelectItem key={account.account_key} value={account.account_key}>
+                          {account.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FormItem>
+
+                {/* Sub-account (From Address) Selection */}
                 <FormField
                   control={form.control}
                   name="accountSelect"
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel className="text-xs font-medium text-slate-600 flex items-center">
-                        <User className="h-3 w-3 mr-1" />
-                        Account
+                        <AtSign className="h-3 w-3 mr-1" />
+                        From Address
                       </FormLabel>
-                      <Select onValueChange={field.onChange} defaultValue={field.value} data-testid="select-bulk-account">
+                      <Select onValueChange={field.onChange} value={field.value} data-testid="select-sub-account">
                         <FormControl>
                           <SelectTrigger className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
-                            <SelectValue placeholder="Choose an account" />
+                            <SelectValue placeholder="Choose a from address" />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          {accounts?.map((account) => (
-                            <SelectItem key={account.account_key} value={account.account_key}>
-                              {account.name} ({account.fromAddress})
-                            </SelectItem>
-                          ))}
+                          {subAccountsLoading ? (
+                            <div className="flex items-center justify-center p-4">
+                              <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                            </div>
+                          ) : (
+                            subAccounts?.map((account) => (
+                              <SelectItem key={account.account_key} value={account.emailAddress}>
+                                {account.displayName} ({account.emailAddress})
+                              </SelectItem>
+                            ))
+                          )}
                         </SelectContent>
                       </Select>
                       <FormMessage />
@@ -481,7 +543,6 @@ export default function BulkSend() {
                           </div>
                         </div>
                       </FormControl>
-                      {/* Email Validation Summary */}
                       {recipients && (
                         <div className="flex items-center space-x-3 text-xs mt-2">
                           <div className="flex items-center space-x-1">
@@ -590,108 +651,41 @@ export default function BulkSend() {
                       Clear
                     </Button>
                   </div>
-                  <Button
-                    type="submit"
-                    disabled={isProcessing || emailAnalysis.valid.length === 0}
-                    className="inline-flex items-center px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm rounded-lg disabled:opacity-50"
-                    data-testid="button-send-bulk"
-                  >
-                    {isProcessing ? (
-                      <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Sending {currentRecipientIndex}...
-                      </>
-                    ) : (
-                      <>
-                        <Send className="h-4 w-4 mr-2" />
-                        Send to {Array.from(new Set(emailAnalysis.valid)).length} Recipients
-                      </>
-                    )}
-                  </Button>
+                  {isProcessing ? (
+                    <div className="flex items-center space-x-2">
+                      <Button
+                        type="button"
+                        variant={isPaused ? "default" : "secondary"}
+                        onClick={() => setIsPaused(!isPaused)}
+                      >
+                        {isPaused ? <><Play className="h-4 w-4 mr-2" /> Resume</> : <><Pause className="h-4 w-4 mr-2" /> Pause</>}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        onClick={() => setIsEnded(true)}
+                      >
+                        <Square className="h-4 w-4 mr-2" /> End Job
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      type="submit"
+                      disabled={emailAnalysis.total === 0}
+                      className="inline-flex items-center px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm rounded-lg disabled:opacity-50"
+                      data-testid="button-send-bulk"
+                    >
+                      <Send className="h-4 w-4 mr-2" />
+                      Send to {emailAnalysis.total} Recipients
+                    </Button>
+                  )}
                 </div>
               </form>
             </Form>
           </CardContent>
         </Card>
-
-        {/* Email Preview Popup */}
-        {showEmailPreview && (
-          <Dialog open={showEmailPreview} onOpenChange={setShowEmailPreview}>
-            <DialogContent className="max-w-4xl max-h-[80vh] overflow-auto">
-              <DialogHeader>
-                <DialogTitle className="flex items-center">
-                  <Eye className="h-5 w-5 mr-2" />
-                  Email Preview - HTML Rendered
-                </DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div className="bg-slate-50 rounded-lg p-4 border border-slate-200">
-                  <div className="grid grid-cols-2 gap-4 mb-4">
-                    <div>
-                      <div className="text-xs font-medium text-slate-500 mb-1">Subject:</div>
-                      <div className="text-sm font-medium text-slate-800">{form.watch("subject") || "No subject"}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs font-medium text-slate-500 mb-1">Recipients:</div>
-                      <div className="text-sm text-slate-600">{Array.from(new Set(emailAnalysis.valid)).length} valid recipients</div>
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="bg-white border border-slate-200 rounded-lg">
-                  <div className="bg-slate-100 px-4 py-2 border-b border-slate-200 text-xs font-medium text-slate-600 flex items-center justify-between">
-                    <span>Email Content (HTML Rendered)</span>
-                    <div className="flex items-center space-x-2">
-                      <div className="w-3 h-3 rounded-full bg-red-500"></div>
-                      <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
-                      <div className="w-3 h-3 rounded-full bg-green-500"></div>
-                    </div>
-                  </div>
-                  <div className="bg-white border-2 border-slate-100 mx-2 my-2 rounded">
-                    <iframe
-                      srcDoc={`
-                        <!DOCTYPE html>
-                        <html>
-                        <head>
-                          <meta charset="utf-8">
-                          <meta name="viewport" content="width=device-width, initial-scale=1">
-                          <style>
-                            body { 
-                              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
-                              margin: 20px; 
-                              line-height: 1.6; 
-                              color: #333;
-                            }
-                            img { max-width: 100%; height: auto; }
-                            table { border-collapse: collapse; width: 100%; }
-                            td, th { padding: 8px; text-align: left; }
-                          </style>
-                        </head>
-                        <body>
-                          ${form.watch("content") || '<p style="color: #999; font-style: italic;">No content entered</p>'}
-                        </body>
-                        </html>
-                      `}
-                      className="w-full h-96 border-0 rounded"
-                      title="Email Preview"
-                      sandbox="allow-same-origin"
-                    />
-                  </div>
-                </div>
-                
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  <div className="text-sm text-blue-800">
-                    <strong>Preview Note:</strong> This shows how your HTML email content will render for recipients. 
-                    The preview supports full HTML, CSS styling, images, and responsive layouts.
-                  </div>
-                </div>
-              </div>
-            </DialogContent>
-          </Dialog>
-        )}
       </div>
 
-      {/* Results Section with Filters */}
       {showResults && (currentResults.length > 0 || (results && results.length > 0)) && (
         <div className="mt-6 fade-in">
           <Card className="bg-white rounded-lg shadow-md border border-slate-200">
@@ -702,7 +696,6 @@ export default function BulkSend() {
                   Email Results ({filteredResults.length} showing)
                 </CardTitle>
                 <div className="flex items-center space-x-2">
-                  {/* Search Filter */}
                   <div className="relative">
                     <Search className="h-3 w-3 absolute left-2 top-1/2 transform -translate-y-1/2 text-slate-400" />
                     <Input
@@ -714,19 +707,17 @@ export default function BulkSend() {
                     />
                   </div>
                   
-                  {/* Status Filter */}
                   <Select value={statusFilter} onValueChange={(value: 'all' | 'Success' | 'Failed') => setStatusFilter(value)}>
-                    <SelectTrigger className="w-24 h-7 text-xs border-slate-300" data-testid="select-status-filter">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All</SelectItem>
-                      <SelectItem value="Success">Success</SelectItem>
-                      <SelectItem value="Failed">Failed</SelectItem>
-                    </SelectContent>
-                  </Select>
+                        <SelectTrigger className="w-24 h-7 text-xs border-slate-300" data-testid="select-status-filter">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All</SelectItem>
+                          <SelectItem value="Success">Success</SelectItem>
+                          <SelectItem value="Failed">Failed</SelectItem>
+                        </SelectContent>
+                      </Select>
                   
-                  {/* Export Button */}
                   <Button
                     onClick={exportToCSV}
                     variant="outline"
@@ -755,19 +746,16 @@ export default function BulkSend() {
                     >
                       <div className="flex items-center justify-between text-sm">
                         <div className="flex-1 grid grid-cols-5 gap-3 items-center">
-                          {/* Row Number */}
                           <div className="w-8">
                             <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2 py-1 rounded">
                               {index + 1}
                             </span>
                           </div>
                           
-                          {/* Recipient */}
                           <div className="truncate">
                             <p className="font-medium text-slate-800 truncate text-xs">{result.recipient}</p>
                           </div>
                           
-                          {/* Status */}
                           <div>
                             <Badge 
                               className={`text-xs px-2 py-1 ${
@@ -785,12 +773,10 @@ export default function BulkSend() {
                             </Badge>
                           </div>
                           
-                          {/* Message ID */}
                           <div className="text-xs text-slate-600 font-mono truncate">
                             {result.messageId ? result.messageId.substring(0, 12) + '...' : 'N/A'}
                           </div>
                           
-                          {/* Response Code */}
                           <div className="text-right">
                             <ResponseCodePopup result={result} />
                           </div>

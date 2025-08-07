@@ -1,22 +1,20 @@
+import React, { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { Mail, Send, Users, BarChart3, CheckCircle, XCircle, Activity } from "lucide-react";
+import { Mail, Send, Users, BarChart3, CheckCircle, XCircle, Activity, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { type EmailResult } from "@shared/schema";
+import AccountManager from "./AccountManager";
 
 export default function Navigation() {
   const [location] = useLocation();
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
 
   const { data: results } = useQuery<EmailResult[]>({
     queryKey: ['/api/bulk-results'],
-    refetchInterval: 2000, // Refresh every 2 seconds for real-time updates
-  });
-
-  // Also get current results from bulk-send page
-  const { data: currentResults } = useQuery<EmailResult[]>({
-    queryKey: ['/api/current-bulk-results'],
-    enabled: false, // Only used for cache access
+    // refetchInterval: 2000,
   });
 
   const isActive = (path: string) => {
@@ -26,14 +24,12 @@ export default function Navigation() {
     return location === path;
   };
 
-  // Calculate stats from stored results
   const allResults = results || [];
   const successCount = allResults.filter(r => r.status === 'Success').length;
   const failedCount = allResults.filter(r => r.status === 'Failed').length;
   const totalCount = allResults.length;
   const successRate = totalCount > 0 ? Math.round((successCount / totalCount) * 100) : 0;
 
-  // Debug logging
   console.log('Navbar stats:', { totalCount, successCount, failedCount, successRate, results });
 
   return (
@@ -49,7 +45,6 @@ export default function Navigation() {
             </Link>
           </div>
 
-          {/* Stats in Navbar - Always show when we have data */}
           {totalCount > 0 && (
             <div className="hidden md:flex items-center space-x-3 bg-slate-50 px-4 py-2 rounded-lg">
               <div className="flex items-center space-x-2">
@@ -108,6 +103,24 @@ export default function Navigation() {
                 Bulk Dashboard
               </Button>
             </Link>
+            <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" className="px-4 py-2 rounded-lg text-sm font-medium">
+                  <Plus className="h-4 w-4 mr-2" /> View and Add Account
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-6xl h-[80vh] flex flex-col p-6">
+                <DialogHeader>
+                  <DialogTitle>Account Management</DialogTitle>
+                  <p className="text-sm text-muted-foreground">
+                    Add new accounts or view details for existing ones.
+                  </p>
+                </DialogHeader>
+                <div className="flex-1 overflow-y-auto pt-4">
+                  <AccountManager />
+                </div>
+              </DialogContent>
+            </Dialog>
           </div>
         </div>
       </div>

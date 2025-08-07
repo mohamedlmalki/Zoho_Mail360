@@ -1,11 +1,19 @@
 import { type User, type InsertUser, type EmailAccount, type EmailResult } from "@shared/schema";
 import { randomUUID } from "crypto";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const accountsPath = path.join(__dirname, '..', 'accounts.json');
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   getEmailAccounts(): Promise<EmailAccount[]>;
+  addEmailAccount(account: Omit<EmailAccount, "account_key">): Promise<EmailAccount>;
   storeEmailResults(results: EmailResult[]): Promise<void>;
   getEmailResults(sessionId?: string): Promise<EmailResult[]>;
 }
@@ -37,22 +45,27 @@ export class MemStorage implements IStorage {
   }
 
   async getEmailAccounts(): Promise<EmailAccount[]> {
-    // Load accounts from accounts.json
     try {
-      const fs = await import('fs');
-      const path = await import('path');
-      const { fileURLToPath } = await import('url');
-      
-      const __filename = fileURLToPath(import.meta.url);
-      const __dirname = path.dirname(__filename);
-      const accountsPath = path.join(__dirname, '..', 'accounts.json');
-      
       const accountsData = fs.readFileSync(accountsPath, 'utf8');
       const accounts = JSON.parse(accountsData);
       return accounts;
     } catch (error) {
       console.error('Error loading accounts:', error);
       return [];
+    }
+  }
+
+  async addEmailAccount(account: Omit<EmailAccount, "account_key">): Promise<EmailAccount> {
+    try {
+      const newAccountKey = randomUUID();
+      const newAccount = { ...account, account_key: newAccountKey };
+      const currentAccounts = await this.getEmailAccounts();
+      currentAccounts.push(newAccount);
+      fs.writeFileSync(accountsPath, JSON.stringify(currentAccounts, null, 2));
+      return newAccount;
+    } catch (error) {
+      console.error('Error adding account:', error);
+      throw new Error("Failed to add new account to storage.");
     }
   }
 
@@ -65,7 +78,6 @@ export class MemStorage implements IStorage {
     if (sessionId) {
       return this.emailResults.get(sessionId) || [];
     }
-    // Return latest results if no sessionId provided
     const entries = Array.from(this.emailResults.entries());
     return entries.length > 0 ? entries[entries.length - 1][1] : [];
   }
