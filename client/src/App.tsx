@@ -7,6 +7,8 @@ import NotFound from "@/pages/not-found";
 import SingleSend from "@/pages/single-send";
 import BulkSend from "@/pages/bulk-send";
 import Navigation from "@/components/navigation";
+// 1. IMPORT THE NEW PAGE
+import BounceDashboard from "@/pages/bounce-dashboard";
 
 function Router() {
   return (
@@ -16,6 +18,8 @@ function Router() {
         <Route path="/" component={SingleSend} />
         <Route path="/single-send" component={SingleSend} />
         <Route path="/bulk-send" component={BulkSend} />
+        {/* 2. ADD THE NEW ROUTE HERE */}
+        <Route path="/bounce-dashboard" component={BounceDashboard} />
         <Route component={NotFound} />
       </Switch>
     </div>

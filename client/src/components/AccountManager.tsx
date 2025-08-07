@@ -3,11 +3,11 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
-import { Plus, Loader2, Mail, Users, Filter, Code, Eye } from "lucide-react";
+import { Plus, Loader2, Mail, Key } from "lucide-react";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
@@ -15,16 +15,17 @@ import { apiRequest } from "@/lib/queryClient";
 import { type EmailAccount } from "@shared/schema";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
 
-// Schema for the add account form
+// NEW: Schema updated to remove the 'fromAddress' field.
 const addAccountSchema = z.object({
   name: z.string().min(1, "Account name is required"),
-  displayName: z.string().min(1, "Display name is required"),
-  emailid: z.string().email("Invalid email address"),
+  client_id: z.string().min(1, "Client ID is required"),
+  client_secret: z.string().min(1, "Client Secret is required"),
+  refresh_token: z.string().min(1, "Refresh Token is required"),
 });
 
 type AddAccount = z.infer<typeof addAccountSchema>;
 
-// Corrected schema for a single email address from the Zoho API
+// Schema for Zoho API response (no changes here)
 const zohoSubAccountSchema = z.object({
   account_key: z.string(),
   emailAddress: z.string().email(),
@@ -38,12 +39,8 @@ const zohoSubAccountSchema = z.object({
 
 type ZohoSubAccount = z.infer<typeof zohoSubAccountSchema>;
 
-// API response schema for fetching all accounts
 const zohoAccountsResponseSchema = z.object({
-  status: z.object({
-    code: z.number(),
-    description: z.string(),
-  }),
+  status: z.object({ code: z.number(), description: z.string() }),
   data: z.array(zohoSubAccountSchema),
 });
 
@@ -53,13 +50,11 @@ export default function AccountManager() {
   const queryClient = useQueryClient();
   const [selectedPrimaryAccountKey, setSelectedPrimaryAccountKey] = useState<string | null>(null);
 
-  // Fetch the list of primary Zoho accounts from our backend
   const { data: primaryAccounts, isLoading: primaryAccountsLoading } = useQuery<EmailAccount[]>({
     queryKey: ['/api/accounts'],
     staleTime: Infinity
   });
 
-  // Fetch the sub-accounts (from addresses) for the selected primary account from Zoho
   const { data: subAccounts, isLoading: subAccountsLoading } = useQuery({
     queryKey: ['/api/zoho-accounts', selectedPrimaryAccountKey],
     queryFn: async ({ queryKey }) => {
@@ -67,9 +62,7 @@ export default function AccountManager() {
       if (!accountKey) return [];
       const res = await apiRequest('GET', `/api/zoho-accounts?accountKey=${accountKey}`);
       const data = await res.json();
-      
       const parsedData = zohoAccountsResponseSchema.parse(data);
-      
       return parsedData.data;
     },
     enabled: !!selectedPrimaryAccountKey,
@@ -80,23 +73,22 @@ export default function AccountManager() {
     resolver: zodResolver(addAccountSchema),
     defaultValues: {
       name: "",
-      displayName: "",
-      emailid: "",
+      client_id: "",
+      client_secret: "",
+      refresh_token: "",
     },
   });
 
   const addAccountMutation = useMutation({
     mutationFn: async (data: AddAccount) => {
-      const payload = { ...data, accountType: 1 };
-      const res = await apiRequest('POST', '/api/add-native-account', payload);
+      const res = await apiRequest('POST', '/api/add-account', data);
       return res.json();
     },
     onSuccess: (data) => {
       toast({
         title: "Account added!",
-        description: `Account '${data.data.name}' has been added successfully.`,
+        description: `Account '${data.name}' has been added successfully.`,
       });
-      // Invalidate queries to refetch the primary account list
       queryClient.invalidateQueries({ queryKey: ['/api/accounts'] });
       form.reset();
     },
@@ -113,7 +105,6 @@ export default function AccountManager() {
     addAccountMutation.mutate(data);
   };
   
-  // Set the first primary account as selected by default
   useEffect(() => {
     if (primaryAccounts && primaryAccounts.length > 0 && !selectedPrimaryAccountKey) {
       setSelectedPrimaryAccountKey(primaryAccounts[0].account_key);
@@ -122,7 +113,6 @@ export default function AccountManager() {
 
   return (
     <div className="space-y-6">
-      {/* Add Account Section */}
       <div className="space-y-4">
         <h3 className="text-lg font-semibold flex items-center gap-2">
           <Plus className="h-4 w-4" /> Add Account
@@ -144,12 +134,12 @@ export default function AccountManager() {
             />
             <FormField
               control={form.control}
-              name="displayName"
+              name="client_id"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Display Name</FormLabel>
+                  <FormLabel className="flex items-center"><Key className="h-3 w-3 mr-1.5"/> Client ID</FormLabel>
                   <FormControl>
-                    <Input placeholder="e.g., Jane Doe" {...field} />
+                    <Input placeholder="Your Zoho Client ID" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -157,12 +147,25 @@ export default function AccountManager() {
             />
             <FormField
               control={form.control}
-              name="emailid"
+              name="client_secret"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Email Address</FormLabel>
+                  <FormLabel className="flex items-center"><Key className="h-3 w-3 mr-1.5"/> Client Secret</FormLabel>
                   <FormControl>
-                    <Input type="email" placeholder="e.g., jane.doe@example.com" {...field} />
+                    <Input placeholder="Your Zoho Client Secret" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="refresh_token"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="flex items-center"><Key className="h-3 w-3 mr-1.5"/> Refresh Token</FormLabel>
+                  <FormControl>
+                    <Input placeholder="Your Zoho Refresh Token" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -170,7 +173,7 @@ export default function AccountManager() {
             />
             <div className="flex justify-end">
               <Button type="submit" disabled={addAccountMutation.isPending}>
-                {addAccountMutation.isPending ? "Adding..." : "Add Account"}
+                {addAccountMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add Account"}
               </Button>
             </div>
           </form>
@@ -179,7 +182,6 @@ export default function AccountManager() {
 
       <Separator />
 
-      {/* View Accounts Table Section */}
       <div className="space-y-4">
         <h3 className="text-lg font-semibold flex items-center gap-2">
           <Mail className="h-4 w-4" /> All Accounts

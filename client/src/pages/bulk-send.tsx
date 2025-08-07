@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -37,8 +37,8 @@ function ResponseCodePopup({ result }: { result: EmailResult }) {
           variant="outline"
           size="sm"
           className={`px-3 py-1 text-xs font-mono ${
-            result.status === 'Success' 
-              ? 'text-green-700 border-green-300 hover:bg-green-50' 
+            result.status === 'Success'
+              ? 'text-green-700 border-green-300 hover:bg-green-50'
               : 'text-red-700 border-red-300 hover:bg-red-50'
           }`}
           data-testid={`button-response-code-${result.recipient}`}
@@ -71,8 +71,8 @@ function ResponseCodePopup({ result }: { result: EmailResult }) {
                 Status
               </div>
               <Badge className={`${
-                result.status === 'Success' 
-                  ? 'bg-green-100 text-green-800' 
+                result.status === 'Success'
+                  ? 'bg-green-100 text-green-800'
                   : 'bg-red-100 text-red-800'
               }`}>
                 {result.status}
@@ -86,8 +86,8 @@ function ResponseCodePopup({ result }: { result: EmailResult }) {
               Response Code
             </div>
             <p className={`text-sm font-mono p-2 rounded ${
-              result.status === 'Success' 
-                ? 'bg-green-100 text-green-800' 
+              result.status === 'Success'
+                ? 'bg-green-100 text-green-800'
                 : 'bg-red-100 text-red-800'
             }`}>
               {result.responseCode || 'N/A'}
@@ -129,8 +129,9 @@ export default function BulkSend() {
   const [showResults, setShowResults] = useState(false);
   const [currentResults, setCurrentResults] = useState<EmailResult[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
-  const [isEnded, setIsEnded] = useState(false);
+  const isPaused = useRef(false);
+  const isEnded = useRef(false);
+  const [isPausedState, setIsPausedState] = useState(false);
   const [currentRecipientIndex, setCurrentRecipientIndex] = useState(0);
   const [statusFilter, setStatusFilter] = useState<'all' | 'Success' | 'Failed'>('all');
   const [searchTerm, setSearchTerm] = useState('');
@@ -269,18 +270,19 @@ export default function BulkSend() {
     setShowResults(true);
     setCurrentResults([]);
     setCurrentRecipientIndex(0);
-    setIsPaused(false);
-    setIsEnded(false);
+    isPaused.current = false;
+    setIsPausedState(false);
+    isEnded.current = false;
 
     const recipientList = formData.recipients.split('\n').map(email => email.trim()).filter(email => email);
     const tempResults: EmailResult[] = [];
 
     for (let i = 0; i < recipientList.length; i++) {
       // Pause/End logic
-      while (isPaused && !isEnded) {
+      while (isPaused.current && !isEnded.current) {
         await new Promise(resolve => setTimeout(resolve, 100));
       }
-      if (isEnded) break;
+      if (isEnded.current) break;
 
       setCurrentRecipientIndex(i + 1);
       
@@ -520,7 +522,8 @@ export default function BulkSend() {
                       <FormControl>
                         <div className="relative">
                           <Textarea
-                            placeholder="recipient1@example.com&#10;recipient2@example.com"
+                            placeholder="recipient1@example.com
+recipient2@example.com"
                             rows={5}
                             className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono resize-y"
                             data-testid="textarea-recipients"
@@ -655,15 +658,20 @@ export default function BulkSend() {
                     <div className="flex items-center space-x-2">
                       <Button
                         type="button"
-                        variant={isPaused ? "default" : "secondary"}
-                        onClick={() => setIsPaused(!isPaused)}
+                        variant={isPausedState ? "default" : "secondary"}
+                        onClick={() => {
+                          isPaused.current = !isPaused.current;
+                          setIsPausedState(isPaused.current);
+                        }}
                       >
-                        {isPaused ? <><Play className="h-4 w-4 mr-2" /> Resume</> : <><Pause className="h-4 w-4 mr-2" /> Pause</>}
+                        {isPausedState ? <><Play className="h-4 w-4 mr-2" /> Resume</> : <><Pause className="h-4 w-4 mr-2" /> Pause</>}
                       </Button>
                       <Button
                         type="button"
                         variant="destructive"
-                        onClick={() => setIsEnded(true)}
+                        onClick={() => {
+                          isEnded.current = true;
+                        }}
                       >
                         <Square className="h-4 w-4 mr-2" /> End Job
                       </Button>

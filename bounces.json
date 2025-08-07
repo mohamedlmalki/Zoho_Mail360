@@ -1,0 +1,16 @@
+[
+  {
+    "recipient": "aaa@a.com",
+    "bounceType": "hard",
+    "accountKey": "Bd8l23G08828",
+    "id": "25487967-2b8c-4326-8777-2c12ed870118",
+    "createdAt": "2025-08-07T14:52:34.610Z"
+  },
+  {
+    "recipient": "kariemckinley@outlook.com",
+    "bounceType": "hard",
+    "accountKey": "Bd8l23G08828",
+    "id": "a4547cdb-b26f-4ea8-b760-638cd6b101fb",
+    "createdAt": "2025-08-07T14:53:56.214Z"
+  }
+]

@@ -16,7 +16,7 @@ export type BounceRecord = {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const accountsPath = path.join(__dirname, '..', 'accounts.json');
-// Define the path for our new bounces.json file
+// NEW: Define the path for our new bounces.json file
 const bouncesPath = path.join(__dirname, '..', 'bounces.json');
 
 export interface IStorage {
@@ -24,7 +24,7 @@ export interface IStorage {
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   getEmailAccounts(): Promise<EmailAccount[]>;
-  addEmailAccount(account: EmailAccount): Promise<EmailAccount>;
+  addEmailAccount(account: EmailAccount): Promise<EmailAccount>; // Updated to expect full account
   storeEmailResults(results: EmailResult[]): Promise<void>;
   getEmailResults(sessionId?: string): Promise<EmailResult[]>;
   // NEW: Functions to handle reading and writing bounces

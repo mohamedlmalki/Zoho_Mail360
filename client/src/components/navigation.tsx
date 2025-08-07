@@ -103,6 +103,23 @@ export default function Navigation() {
                 Bulk Dashboard
               </Button>
             </Link>
+
+            {/* NEW LINK FOR BOUNCE DASHBOARD */}
+            <Link href="/bounce-dashboard">
+              <Button
+                variant={isActive("/bounce-dashboard") ? "default" : "ghost"}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-300 ${
+                  isActive("/bounce-dashboard")
+                    ? "text-white bg-primary hover:bg-blue-600"
+                    : "text-slate-600 hover:text-slate-800 hover:bg-slate-100"
+                }`}
+                data-testid="nav-bounce-dashboard"
+              >
+                <BarChart3 className="h-4 w-4 mr-2" />
+                Bounce Stats
+              </Button>
+            </Link>
+            
             <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
               <DialogTrigger asChild>
                 <Button variant="outline" className="px-4 py-2 rounded-lg text-sm font-medium">
